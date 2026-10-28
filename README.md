@@ -1,6 +1,6 @@
 # test-website
 
-A browser-based assessment demo with camera preview, timed multiple-choice questions, fullscreen and tab-change warnings, and a five-warning session limit.
+An adaptive browser-based learning assessment for SQL, pandas, NumPy, Python fundamentals, data engineering, and general problem solving. It uses an original question bank, shows explanations after answers, and remembers each topic's adaptive level locally on the device.
 
 ## Run locally
 
@@ -12,6 +12,8 @@ python -m http.server 4173
 
 Then open http://localhost:4173. Camera access requires browser permission and is generally available on `localhost` or HTTPS.
 
-## Prototype limitations
+## Integrity and prototype limitations
 
-The camera stream stays in the browser and is not uploaded or recorded. Face detection is available only in browsers that implement the experimental `FaceDetector` API. This demo is not a reliable cheating detector or a production proctoring system.
+The camera stream stays in the browser and is not uploaded or recorded. Leaving the assessment tab, exiting fullscreen, or stopping camera access adds a warning; the session ends at five warnings. Repeated multiple-face detections end a session immediately where the browser supports the experimental `FaceDetector` API. This detection may be inaccurate or unavailable, and browser-only controls can be bypassed. The project is a learning prototype, not a tamper-proof or production proctoring system.
+
+Questions are original practice material covering common data skills interview topics. They are not copied from HackerRank or other proprietary question banks.
