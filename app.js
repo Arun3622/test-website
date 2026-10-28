@@ -16,7 +16,7 @@
     if (!navigator.mediaDevices?.getUserMedia) { $('notice').textContent = 'Camera access requires HTTPS or localhost in a supported browser.'; $('notice').style.color = '#b34e43'; return; }
     $('cameraButton').disabled = true; $('cameraButton').textContent = 'Connecting…';
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false }).then((media) => {
-      stream = media; $('preview').srcObject = stream; $('preview').classList.remove('hidden'); $('cameraPlaceholder').classList.add('hidden'); $('cameraLive').classList.add('visible'); $('cameraStatus').textContent = 'Ready'; $('cameraStatus').className = 'status ready'; $('cameraButton').classList.add('hidden'); $('notice').textContent = 'Camera ready. Loading face, eye, and phone models…'; $('notice').style.color = '#548264'; updateStartButton(); loadFaceModel().then(() => { $('notice').textContent = 'Models ready. Calibrate gaze and complete the microphone test.'; $('gazeCalibrate').disabled = false; updateStartButton(); }).catch(() => { $('notice').textContent = 'A monitoring model could not load. Check your connection and retry.'; $('notice').style.color = '#b34e43'; updateStartButton(); });
+      stream = media; $('preview').srcObject = stream; $('preview').classList.remove('hidden'); $('cameraPlaceholder').classList.add('hidden'); $('cameraLive').classList.add('visible'); $('cameraStatus').textContent = 'Ready'; $('cameraStatus').className = 'status ready'; $('cameraButton').classList.add('hidden'); $('notice').textContent = 'Camera ready. Loading face, eye, and phone models…'; $('notice').style.color = '#548264'; updateStartButton(); $('preview').play().catch(() => {}); loadFaceModel().then(() => { $('notice').textContent = 'Models ready. Calibrate gaze and complete the microphone test.'; $('gazeCalibrate').disabled = false; updateStartButton(); }).catch(() => { $('notice').textContent = 'A monitoring model could not load. Check your connection and retry.'; $('notice').style.color = '#b34e43'; updateStartButton(); });
       stream.getVideoTracks()[0]?.addEventListener('ended', () => { if (active && !ended) addWarning('Camera feed stopped'); });
     }).catch((error) => { $('cameraButton').disabled = false; $('cameraButton').textContent = 'Try camera again'; $('notice').textContent = error.name === 'NotAllowedError' ? 'Camera permission was denied. Allow access in browser settings to continue.' : 'Could not start the camera. Check that it is connected and try again.'; $('notice').style.color = '#b34e43'; });
   }
@@ -61,13 +61,22 @@
     if (xs.length < 2 || ys.length < 2) return null; return { x: (xs[0] + xs[1]) / 2, y: (ys[0] + ys[1]) / 2 };
   }
   async function calibrateGaze() {
-    if (!faceDetector || !faceModelReady || $('preview').readyState < 2) { $('gazeSetupStatus').textContent = 'Wait for the camera and eye model to be ready.'; return; }
-    const button = $('gazeCalibrate'); button.disabled = true; gazeCalibrated = false; gazeBaseline = null; $('gazeSetupStatus').textContent = 'Look steadily at the center of your laptop screen…'; updateStartButton();
-    const samples = []; const deadline = performance.now() + 4200;
-    try { while (performance.now() < deadline) { const faces = await faceDetector.estimateFaces($('preview'), { flipHorizontal: true }); if (faces.length === 1) { const signal = eyeSignal(faces[0]); if (signal && signal.x > .05 && signal.x < .95 && signal.y > .05 && signal.y < .95) samples.push(signal); } await new Promise((resolve) => setTimeout(resolve, 250)); }
-      if (samples.length < 3) { $('gazeSetupStatus').textContent = 'Could not get a steady eye reading. Adjust lighting and retry.'; button.disabled = false; return; }
-      gazeBaseline = { x: samples.reduce((s, p) => s + p.x, 0) / samples.length, y: samples.reduce((s, p) => s + p.y, 0) / samples.length }; gazeCalibrated = true; $('gazeSetupStatus').textContent = 'Calibrated. Keep the laptop screen in your natural viewing position.'; button.textContent = 'Recalibrate'; button.disabled = false; updateStartButton();
-    } catch { $('gazeSetupStatus').textContent = 'Eye calibration failed. Check the camera and retry.'; button.disabled = false; updateStartButton(); }
+    const video = $('preview');
+    if (!faceDetector || !faceModelReady || !stream?.active) { $('gazeSetupStatus').textContent = 'Enable the camera and wait for the eye model to show Ready.'; return; }
+    if (video.readyState < 2) { $('gazeSetupStatus').textContent = 'Waiting for camera picture…'; try { await Promise.race([new Promise((resolve) => video.addEventListener('loadeddata', resolve, { once: true })), new Promise((resolve) => setTimeout(resolve, 5000))]); } catch {} }
+    if (video.readyState < 2) { $('gazeSetupStatus').textContent = 'Camera picture has not started. Re-enable the camera and try again.'; return; }
+    const button = $('gazeCalibrate'); button.disabled = true; gazeCalibrated = false; gazeBaseline = null; $('gazeSetupStatus').textContent = 'Look steadily at the center of your screen. Reading eye position…'; updateStartButton();
+    const samples = []; let sawFace = false, sawIris = false; const deadline = performance.now() + 10000;
+    try {
+      while (performance.now() < deadline && samples.length < 8) {
+        const faces = await faceDetector.estimateFaces(video, { flipHorizontal: true });
+        if (faces.length === 1) { sawFace = true; const signal = eyeSignal(faces[0]); if (signal) { sawIris = true; if (signal.x > .05 && signal.x < .95 && signal.y > .05 && signal.y < .95) samples.push(signal); } }
+        $('gazeSetupStatus').textContent = `Keep looking at the screen · ${samples.length} eye readings`; await new Promise((resolve) => setTimeout(resolve, 120));
+      }
+      if (samples.length < 3) { $('gazeSetupStatus').textContent = !sawFace ? 'No face found. Center your face, improve lighting, then retry.' : !sawIris ? 'Face found, but eye landmarks are unavailable. Move closer and retry.' : 'Eye reading was unstable. Face the screen, improve lighting, then retry.'; button.disabled = false; return; }
+      const median = (values) => { values.sort((a, b) => a - b); return values[Math.floor(values.length / 2)]; };
+      gazeBaseline = { x: median(samples.map((p) => p.x)), y: median(samples.map((p) => p.y)) }; gazeCalibrated = true; $('gazeSetupStatus').textContent = `Calibrated from ${samples.length} readings. Keep your screen in this position.`; button.textContent = 'Recalibrate'; button.disabled = false; updateStartButton();
+    } catch (error) { console.error('Eye calibration failed:', error); $('gazeSetupStatus').textContent = 'Eye model could not read the camera. Check camera permissions and retry.'; button.disabled = false; updateStartButton(); }
   }
   async function startAssessment() {
     if (!stream?.active || !micReady || !faceModelReady || !objectModelReady || !gazeCalibrated || !$('nameInput').value.trim()) { $('notice').textContent = 'Enter your name, enable the camera, wait for both models, calibrate gaze, and complete the microphone test.'; return; }
