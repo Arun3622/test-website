@@ -4,13 +4,14 @@
   const views = { welcome: $('welcome'), exam: $('exam'), result: $('result') };
   const bank = window.QUESTION_BANK || [];
   const tracks = { mixed: 'Mixed data skills', sql: 'SQL', pandas: 'Pandas', numpy: 'NumPy', engineering: 'Data engineering', problem: 'Problem solving', python: 'Python fundamentals' };
-  const levels = ['Foundation', 'Intermediate', 'Advanced'];
-  let stream = null, micStream = null, audioContext = null, analyser = null, micReady = false, micFrame = null, motionTimer = null, previousFrame = null, active = false, warnings = 0, questionIndex = 0, questions = [], answers = [], reviewed = [], seconds = 30 * 60, tick = null, faceTimer = null, faceDetector = null, toastTimer = null, ended = false, fullscreenRequested = false, fullscreenSuspended = false, multipleFaceRuns = 0, lastClipboardAction = 0, currentTrack = 'mixed', currentLevel = 0;
+  const levels = ['Easy', 'Medium'];
+  const questionLevel = { easy: 'Foundation', medium: 'Intermediate' };
+  let stream = null, micStream = null, audioContext = null, analyser = null, micReady = false, micFrame = null, motionTimer = null, previousFrame = null, active = false, warnings = 0, questionIndex = 0, questions = [], answers = [], reviewed = [], seconds = 30 * 60, tick = null, faceTimer = null, faceDetector = null, toastTimer = null, ended = false, fullscreenRequested = false, fullscreenSuspended = false, multipleFaceRuns = 0, lastClipboardAction = 0, currentTrack = 'mixed', currentLevel = 0, currentDifficulty = 'adaptive';
   const readProgress = () => { try { return JSON.parse(localStorage.getItem('northstar-progress') || '{}'); } catch { return {}; } };
   function setView(view) { Object.values(views).forEach((node) => node.classList.add('hidden')); views[view].classList.remove('hidden'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
   function shuffle(items) { const copy = [...items]; for (let i = copy.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; } return copy; }
   function showToast(message, kind = '') { const toast = $('toast'); toast.textContent = message; toast.className = `toast show ${kind}`; clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.className = 'toast', 3400); }
-  function refreshLevel() { const topic = $('topicSelect').value; const progress = readProgress(); const level = progress[topic]?.level ?? 0; $('levelBadge').innerHTML = `<span>${levels[level] || levels[0]}</span><small>ADAPTIVE · LOCAL TO THIS DEVICE</small>`; }
+  function refreshLevel() { const topic = $('topicSelect').value; const progress = readProgress(); const level = Math.min(1, Math.max(0, progress[topic]?.level ?? 0)); $('levelBadge').innerHTML = `<span>Next adaptive test: ${levels[level]}</span><small>PROGRESS SAVED ON THIS DEVICE</small>`; }
   function enableCamera() {
     if (!navigator.mediaDevices?.getUserMedia) { $('notice').textContent = 'Camera access requires HTTPS or localhost in a supported browser.'; $('notice').style.color = '#b34e43'; return; }
     $('cameraButton').disabled = true; $('cameraButton').textContent = 'Connecting…';
@@ -35,14 +36,16 @@
     } catch (error) { micStream?.getTracks().forEach((track) => track.stop()); micStream = null; analyser = null; audioContext?.close().catch(() => {}); audioContext = null; $('micButton').disabled = false; $('micButton').textContent = 'Try microphone again'; $('micHelp').textContent = error.name === 'NotAllowedError' ? 'Microphone permission was denied. Allow access and retry.' : error.message || 'Microphone check failed. Retry.'; }
   }
   function prepareQuestions() {
-    currentTrack = $('topicSelect').value; const progress = readProgress(); currentLevel = progress[currentTrack]?.level ?? 0;
+    currentTrack = $('topicSelect').value; currentDifficulty = $('difficultySelect').value; const progress = readProgress(); currentLevel = Math.min(1, Math.max(0, progress[currentTrack]?.level ?? 0));
     let pool = bank.filter((item) => currentTrack === 'mixed' || item.topic === currentTrack);
-    // Adaptive sessions favor the current level, then include other levels for variety.
-    if (currentTrack !== 'mixed') {
-      const preferred = pool.filter((item) => item.level === levels[currentLevel]);
-      const remaining = shuffle(pool.filter((item) => item.level !== levels[currentLevel]));
+    if (currentDifficulty === 'easy' || currentDifficulty === 'medium') pool = shuffle(pool.filter((item) => item.level === questionLevel[currentDifficulty]));
+    else {
+      // Adaptive practice stays within Easy and Medium, favoring the learner's current step.
+      pool = pool.filter((item) => item.level === 'Foundation' || item.level === 'Intermediate');
+      const preferred = pool.filter((item) => item.level === questionLevel[currentLevel === 0 ? 'easy' : 'medium']);
+      const remaining = shuffle(pool.filter((item) => item.level !== questionLevel[currentLevel === 0 ? 'easy' : 'medium']));
       pool = [...shuffle(preferred), ...remaining];
-    } else pool = shuffle(pool);
+    }
     questions = pool.slice(0, Math.min(10, pool.length)); answers = Array(questions.length).fill(null); reviewed = Array(questions.length).fill(false); questionIndex = 0;
   }
   async function startAssessment() {
@@ -50,7 +53,7 @@
     if (!document.documentElement.requestFullscreen) { $('notice').textContent = 'This browser cannot enter full screen, so the assessment cannot start.'; return; }
     prepareQuestions(); if (!questions.length) { $('notice').textContent = 'Question bank unavailable. Reload the page and try again.'; return; }
     try { await document.documentElement.requestFullscreen(); fullscreenRequested = true; } catch { $('notice').textContent = 'Full screen could not be started. Use a supported desktop browser and try again.'; return; }
-    $('candidateLabel').textContent = $('nameInput').value.trim(); $('avatar').textContent = [...$('nameInput').value.trim()][0].toUpperCase(); $('examVideo').srcObject = stream; $('examCameraFallback').classList.add('hidden'); $('examTrack').textContent = tracks[currentTrack].toUpperCase(); $('examSubtitle').textContent = `${questions.length} original questions · ${levels[currentLevel]} adaptive level · explanations after each answer`;
+    $('candidateLabel').textContent = $('nameInput').value.trim(); $('avatar').textContent = [...$('nameInput').value.trim()][0].toUpperCase(); $('examVideo').srcObject = stream; $('examCameraFallback').classList.add('hidden'); $('examTrack').textContent = tracks[currentTrack].toUpperCase(); $('examSubtitle').textContent = `${questions.length} original questions · ${currentDifficulty === 'adaptive' ? `Adaptive (${levels[currentLevel]} first)` : `${currentDifficulty[0].toUpperCase()}${currentDifficulty.slice(1)} difficulty`} · explanations after each answer`;
     active = true; fullscreenSuspended = false; setView('exam'); renderQuestion(); startFaceChecks(); startMotionMonitor(); startExamMicMeter(); tick = setInterval(countdown, 1000);
   }
   function countdown() { if (fullscreenSuspended || document.hidden) return; seconds--; const m = String(Math.floor(seconds / 60)).padStart(2, '0'), s = String(seconds % 60).padStart(2, '0'); $('timer').textContent = `${m}:${s}`; if (seconds <= 0) finish('time'); }
@@ -61,7 +64,7 @@
   }
   function renderQuestion() {
     const item = questions[questionIndex]; const isReviewed = reviewed[questionIndex];
-    $('questionCount').innerHTML = `QUESTION ${String(questionIndex + 1).padStart(2, '0')} <span>/ ${questions.length}</span>`; $('progressBar').style.width = `${(questionIndex + 1) / questions.length * 100}%`; $('questionText').textContent = item.q; $('questionLevel').textContent = item.level.toUpperCase();
+    $('questionCount').innerHTML = `QUESTION ${String(questionIndex + 1).padStart(2, '0')} <span>/ ${questions.length}</span>`; $('progressBar').style.width = `${(questionIndex + 1) / questions.length * 100}%`; $('questionText').textContent = item.q; $('questionLevel').textContent = item.level === 'Foundation' ? 'EASY' : item.level === 'Intermediate' ? 'MEDIUM' : 'CHALLENGE';
     if (item.code) { $('questionCode').textContent = item.code; $('questionCode').classList.remove('hidden'); } else { $('questionCode').classList.add('hidden'); $('questionCode').textContent = ''; }
     $('answers').replaceChildren(); item.a.forEach((answer, index) => { const label = document.createElement('label'); label.className = `answer${answers[questionIndex] === index ? ' selected' : ''}${isReviewed && index === item.correct ? ' answer-correct' : ''}${isReviewed && answers[questionIndex] === index && index !== item.correct ? ' answer-incorrect' : ''}`; const input = document.createElement('input'); input.type = 'radio'; input.name = 'answer'; input.value = index; input.checked = answers[questionIndex] === index; input.disabled = isReviewed; input.addEventListener('change', () => { answers[questionIndex] = index; renderQuestion(); }); const text = document.createElement('span'); text.textContent = answer; label.append(input, text); $('answers').append(label); });
     if (isReviewed) { const correct = answers[questionIndex] === item.correct; $('explanation').className = `explanation ${correct ? 'correct' : 'incorrect'}`; $('explanation').innerHTML = `<strong>${correct ? 'Correct — nice work.' : `Not quite. The answer is: ${item.a[item.correct]}`}</strong><p>${item.why}</p>`; $('savedLabel').textContent = 'Reasoning revealed · continue when ready'; } else { $('explanation').className = 'explanation hidden'; $('savedLabel').textContent = 'Choose an answer to reveal the reasoning'; }
@@ -94,10 +97,10 @@
     $('resultMessage').textContent = integrity ? (reason === 'multiple-faces' ? 'Repeated multiple-face detections ended this session.' : 'The session reached five integrity warnings and was ended.') : 'Review your score and the explanations to reinforce what you learned.';
     $('resultSummary').innerHTML = `<div><strong>${correctCount}/${questions.length}</strong><span>Correct answers</span></div><div><strong>${Math.round(correctCount / questions.length * 100)}%</strong><span>Score</span></div><div><strong>${warnings}/5</strong><span>Integrity warnings</span></div>`;
     const progress = readProgress(); let moved = false; let next = currentLevel;
-    if (!integrity && reason !== 'manual' && questions.length) { if (correctCount / questions.length >= .8 && next < levels.length - 1) { next++; moved = true; } else if (correctCount / questions.length < .4 && next > 0) { next--; moved = true; } progress[currentTrack] = { level: next, best: Math.max(progress[currentTrack]?.best || 0, correctCount / questions.length), tests: (progress[currentTrack]?.tests || 0) + 1 }; try { localStorage.setItem('northstar-progress', JSON.stringify(progress)); } catch { /* Learning state is optional when browser storage is unavailable. */ } }
-    $('nextLevel').classList.toggle('hidden', integrity || !questions.length); $('nextLevel').textContent = integrity ? '' : moved ? `Adaptive level updated: ${levels[next]}. Your progress stays on this device.` : `Current adaptive level: ${levels[next]}. Score 80% to advance; revisit foundations if you score below 40%.`;
+    if (!integrity && reason !== 'manual' && questions.length && currentDifficulty === 'adaptive') { if (correctCount / questions.length >= .8 && next < levels.length - 1) { next++; moved = true; } else if (correctCount / questions.length < .4 && next > 0) { next--; moved = true; } progress[currentTrack] = { level: next, best: Math.max(progress[currentTrack]?.best || 0, correctCount / questions.length), tests: (progress[currentTrack]?.tests || 0) + 1 }; try { localStorage.setItem('northstar-progress', JSON.stringify(progress)); } catch { /* Learning state is optional when browser storage is unavailable. */ } }
+    $('nextLevel').classList.toggle('hidden', integrity || !questions.length); $('nextLevel').textContent = integrity ? '' : currentDifficulty !== 'adaptive' ? `You practiced ${currentDifficulty} questions. Choose Adaptive to follow your Easy → Medium progress.` : moved ? `Adaptive level updated: ${levels[next]}. Your progress stays on this device.` : `Current adaptive level: ${levels[next]}. Score 80% to advance; revisit Easy if you score below 40%.`;
   }
-  $('cameraButton').addEventListener('click', enableCamera); $('micButton').addEventListener('click', testMicrophone); $('nameInput').addEventListener('input', updateStartButton); $('topicSelect').addEventListener('change', refreshLevel); $('startButton').addEventListener('click', startAssessment);
+  $('cameraButton').addEventListener('click', enableCamera); $('micButton').addEventListener('click', testMicrophone); $('nameInput').addEventListener('input', updateStartButton); $('topicSelect').addEventListener('change', refreshLevel); $('difficultySelect').addEventListener('change', refreshLevel); $('startButton').addEventListener('click', startAssessment);
   $('nextButton').addEventListener('click', () => { if (!reviewed[questionIndex]) { if (!revealAnswer()) return; if (questionIndex === questions.length - 1) $('nextButton').innerHTML = 'Finish test <span>✓</span>'; return; } if (questionIndex < questions.length - 1) { questionIndex++; renderQuestion(); } else finish('submit'); }); $('prevButton').addEventListener('click', () => { if (questionIndex > 0) { questionIndex--; renderQuestion(); } }); $('endButton').addEventListener('click', () => finish('manual'));
   document.addEventListener('visibilitychange', () => { if (active && document.hidden) addWarning('Assessment tab left'); if (active && !document.hidden && !document.fullscreenElement) { fullscreenSuspended = true; $('fullscreenShield').classList.remove('hidden'); } });
   document.addEventListener('fullscreenchange', () => { if (!active || !fullscreenRequested) return; if (!document.fullscreenElement) { fullscreenSuspended = true; $('fullscreenShield').classList.remove('hidden'); } else { fullscreenSuspended = false; $('fullscreenShield').classList.add('hidden'); } });

@@ -1,6 +1,6 @@
 # test-website
 
-An adaptive browser-based learning assessment for SQL, pandas, NumPy, Python fundamentals, data engineering, and general problem solving. It uses an original question bank, shows explanations after answers, and remembers each topic's adaptive level locally on the device.
+An adaptive browser-based learning assessment for SQL, pandas, NumPy, Python fundamentals, data engineering, and general problem solving. It includes Easy and Medium difficulty choices plus an adaptive Easy-to-Medium path, shows explanations after answers, and remembers adaptive progress locally on the device. The assessment labels its browser safeguards as Strict monitoring mode.
 
 ## Run locally
 
